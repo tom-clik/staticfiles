@@ -67,11 +67,9 @@ component {
 
 			for (local.script in variables.packages) {
 				StructAppend(local.script, {"pack":true}, false);
+				if (!StructKeyExists(local.script,"min")) local.script.pack = false;
 				if (! StructKeyExists(local.script,"name")) {
 					throw("No name defined for package in json definition");
-				}
-				if (local.script.pack && !StructKeyExists(local.script,"min")) {
-					throw("No min (the src) defined for package in json definition");
 				}
 				variables.packageCache[local.script.name] = local.script;
 
@@ -101,24 +99,12 @@ component {
 		local.scriptsInPackage = {};
 		local.ret = "";
 
-		/* check if any packages in script def  */
-		for (local.scriptname in arguments.scripts) {
+		/* Expand nested packages once, keeping each package's own packing rules. */
+		for (local.scriptname in structKeyArray(arguments.scripts)) {
 			if (StructKeyExists(variables.packageCache, local.scriptname)) {
-				local.packagesIncluded[local.scriptname] = 1;
-				/* add all scripts from package to list. They may have dependencies */
-				local.package = variables.packageCache[local.scriptname];
-				for (local.script2 in local.package.scripts) {
-					if (StructKeyExists(variables.scriptCache, local.script2)) {
-						local.script = variables.scriptCache[local.script2];
-						arguments.scripts[local.script2] = 1;
-						if (local.package.pack && !local.script.packageExclude) {
-							local.scriptsInPackage[local.script2] = 1;
-						}
-					}
-				}
+				includePackage(local.scriptname, arguments.scripts, local.packagesIncluded, local.scriptsInPackage);
 			}
 		}
-
 		/* add required scripts and also note if a script is a package */
 		for (local.script in arguments.scripts) {
 			if (StructKeyExists(variables.scriptCache, local.script) AND
@@ -136,7 +122,8 @@ component {
 					local.ret &= variables.prefix &local.scriptSrc  & variables.suffix;
 				}
 				else if (! StructKeyExists(local.scriptsInPackage, local.script.name) || local.script.packageExclude) {
-					local.ret &= variables.prefix & variables.scriptCache[local.script.name]["min"] & variables.suffix;
+					local.scriptSrc = StructKeyExists(local.script, "min") ? local.script.min : local.script.debug;
+					local.ret &= variables.prefix & local.scriptSrc & variables.suffix;
 				}
 			}
 
@@ -157,6 +144,24 @@ component {
 
 	}
 
+	private void function includePackage(required string name, required struct scripts, required struct packagesIncluded, required struct scriptsInPackage) {
+		// Mark before descending so shared and circular references are included once.
+		if (StructKeyExists(arguments.packagesIncluded, arguments.name)) return;
+		arguments.packagesIncluded[arguments.name] = 1;
+		arguments.scripts[arguments.name] = 1;
+		local.package = variables.packageCache[arguments.name];
+		for (local.member in local.package.scripts) {
+			if (StructKeyExists(variables.packageCache, local.member)) {
+				includePackage(local.member, arguments.scripts, arguments.packagesIncluded, arguments.scriptsInPackage);
+			}
+			else if (StructKeyExists(variables.scriptCache, local.member)) {
+				arguments.scripts[local.member] = 1;
+				if (local.package.pack && !variables.scriptCache[local.member].packageExclude) {
+					arguments.scriptsInPackage[local.member] = 1;
+				}
+			}
+		}
+	}
 	private void function addRequired(required struct scripts, required string required) {
 		for (local.requiredScript in listToArray(arguments.required)) {
 			arguments.scripts[local.requiredScript] = 1;

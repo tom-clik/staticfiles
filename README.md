@@ -64,7 +64,9 @@ Groups of scripts can be defined in packages. These are added in the same way as
 These can include scripts like jquery that won't be "bundled". For any given script definition, the packageExclude
 field can be set to true to ensure the individual script is always used, usually from a CDN.
 
-A package can also be set to not to be packed. Otherwise an "min" attribute must be set for the packaged files (the src). Even if all scripts are marked packageExclude you must still supply either pack:false or a "min" src.
+Set `pack:0` (or `pack:false`) on a package to include its files separately and skip package compression. Packages without a `min` path automatically use `pack:false`. Separate files use each script's `min` source when available, otherwise its `debug` source.
+
+A package's `scripts` array can also list package names, including nested packages. Each nested package follows its own `pack` setting: packed packages add their `min` link, and unpacked packages include their individual files. Nested packages and their files are never folded into the parent bundle. Shared or circular package references are included only once. File links follow the script definition order; bundle links follow the package definition order. Debug mode expands all packages into individual files.
 
 Packages read each script's `debug` source when specified, otherwise its `min` source. A packaged script can specify only `debug`.
 
