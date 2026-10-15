@@ -254,7 +254,8 @@ component {
 
 						if (ArrayFind(local.package.scripts, local.script.name)) {
 							if (!local.script.packageExclude) {
-								local.filename = filePath(local.script.min,arguments.mappings);
+								local.source = structKeyExists(local.script, "debug") ? local.script.debug : local.script.min;
+								local.filename = filePath(local.source, arguments.mappings);
 								if (!FileExists(local.filename)) {
 									Throw(message="File #local.filename# not found for script #local.script.name#. Please check mappings if this doesn't make sense.");
 								}

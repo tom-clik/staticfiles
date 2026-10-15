@@ -66,6 +66,8 @@ field can be set to true to ensure the individual script is always used, usually
 
 A package can also be set to not to be packed. Otherwise an "min" attribute must be set for the packaged files (the src). Even if all scripts are marked packageExclude you must still supply either pack:false or a "min" src.
 
+Packages read each script's `debug` source when specified, otherwise its `min` source. A packaged script can specify only `debug`.
+
 Use `compress()` to compress opted-in individual scripts and concatenate and minify packages with local esbuild. Compression requires Node.js and `npx` on the ColdFusion/Lucee server PATH, permission to run `cfexecute`, and a writable temporary directory. Install esbuild where npx can resolve it; otherwise npx may need network access to fetch it. Both CSS and JavaScript use `npx esbuild --minify`. Set `minify=false` to concatenate without running esbuild. Gulp or other systems can also be used.
 
 ```
