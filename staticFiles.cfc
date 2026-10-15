@@ -11,17 +11,17 @@ component {
 	/**
 	 * Constructor
 	 *
-	 * @staticDef  Struct of static file definitions     
+	 * @staticDef  Struct of static file definitions
 	 * @prefix     The prefix for each item. Change according to whther this is css or js. See setCSS() rather than set these
 	 * @suffix     The suffix for each item. See prefix
 	 *
 	 */
 	public staticFiles function init(
-		required struct staticDef, 
+		required struct staticDef,
 		string prefix="#chr(9)#<script src=""",
 		string suffix="""></script>#chr(13)##chr(10)#"
 		) {
-		
+
 		variables.prefix = arguments.prefix;
 		variables.suffix = arguments.suffix;
 
@@ -39,7 +39,7 @@ component {
 		variables.debugpattern = variables.patternObj.compile("\##DEBUG.*?\/\##DEBUG",variables.patternObj.MULTILINE + variables.patternObj.UNIX_LINES + variables.patternObj.DOTALL);
 		// JS console pattern removes all logging type entries. Use warn or error to leave stuff in
 		variables.consolepattern = variables.patternObj.compile("^\s*console\.(log|group.*?|table|time|trace)\(.*?\)\s*;\s*$",variables.patternObj.MULTILINE + variables.patternObj.UNIX_LINES);
-	
+
 
 		/* create lookup caches keyed by name for scripts and packages */
 
@@ -47,11 +47,11 @@ component {
 		variables.packageCache = {};
 
 		try{
-			
+
 			for (local.script in variables.scripts) {
 				// defaults
-				StructAppend(local.script, {"packageExclude":0}, false);
-				
+				StructAppend(local.script, {"packageExclude":0,"compress":0}, false);
+
 				if (! StructKeyExists(local.script,"name")) {
 					throw("No name defined for script in json definition");
 				}
@@ -76,18 +76,18 @@ component {
 				variables.packageCache[local.script.name] = local.script;
 
 			}
-		} 
+		}
 		catch (any e) {
 			local.extendedinfo = {"error"=e};
 			throw(
 				extendedinfo = SerializeJSON(local.extendedinfo),
-				message      = "Error:" & e.message, 
+				message      = "Error:" & e.message,
 				detail       = e.detail
 			);
 		}
-		
+
 		return this;
-	}	
+	}
 
 	/** Set the options to the defaults for css */
 	public void function setCss() {
@@ -96,7 +96,7 @@ component {
 	}
 
 	public string function getLinks(required struct scripts, boolean debug=false) {
-		
+
 		local.packagesIncluded = {};
 		local.scriptsInPackage = {};
 		local.ret = "";
@@ -110,7 +110,7 @@ component {
 				for (local.script2 in local.package.scripts) {
 					if (StructKeyExists(variables.scriptCache, local.script2)) {
 						local.script = variables.scriptCache[local.script2];
-						arguments.scripts[local.script2] = 1;	
+						arguments.scripts[local.script2] = 1;
 						if (local.package.pack && !local.script.packageExclude) {
 							local.scriptsInPackage[local.script2] = 1;
 						}
@@ -130,7 +130,7 @@ component {
 		for (local.script in variables.scripts) {
 			//writeDump(local.script);
 			if (StructKeyExists(arguments.scripts, local.script.name)) {
-				
+
 				if (arguments.debug) {
 					local.scriptSrc = StructKeyExists(variables.scriptCache[local.script.name], "debug") ? variables.scriptCache[local.script.name]["debug"] : variables.scriptCache[local.script.name]["min"];
 					local.ret &= variables.prefix &local.scriptSrc  & variables.suffix;
@@ -139,8 +139,8 @@ component {
 					local.ret &= variables.prefix & variables.scriptCache[local.script.name]["min"] & variables.suffix;
 				}
 			}
-			
-			
+
+
 		}
 
 		for (local.script in variables.packages) {
@@ -183,67 +183,92 @@ component {
 			local.jsonData = deserializeJSON(local.tempData);
 		}
 		catch (Any e) {
-			throw("Unable to parse static files definition file #arguments.defFile#");	
+			throw("Unable to parse static files definition file #arguments.defFile#");
 		}
 
 		return local.jsonData;
 	}
 
 	/**
-	 * @hint        Compress packages. Currently using toptal API (see callCompressAPI())
+	 * @hint        Compress individual scripts and packages using local esbuild (see compressSource()).
 	 *
-	 * For each package, concatenate files, compress, and save to file specified
+	 * First compress scripts marked compress=1 from debug to min. Then for each package, concatenate files, compress, and save to file specified
 	 *  in "min" field for the package.
 	 *
-	 * 
-	 * 
+	 *
+	 *
 	 * @type        css|javascript
-	 * @overwrite   Allow overwrite of existing file. Recommended to leave this OFF. 
+	 * @overwrite   Allow overwrite of existing file. Recommended to leave this OFF.
 	 *              You should always bump the version
-	 * @return      Array of results (result.name, result.saved [won't save if 
-	 *              pack=false or all scripts are excluded from packages], 	
+	 * @return      Array of results (result.name, result.saved [won't save if
+	 *              pack=false or all scripts are excluded from packages],
 	 *              result.filename, result.files)
 	 */
-	public array function compressPackage(type="css",boolean overwrite=false, struct mappings=[=], boolean minify=true) {
-		
+	public array function compress(type="css",boolean overwrite=false, struct mappings=[=], boolean minify=true) {
+
 		local.results = [];
-		
+		local.jobs = [];
+		// Individual outputs must exist before packages that include them are assembled.
+		for (local.script in variables.scripts) {
+			if (!local.script.compress) continue;
+			if (!structKeyExists(local.script, "debug") || !structKeyExists(local.script, "min")) {
+				throw(message="Script #local.script.name# marked compress=1 requires debug and min paths");
+			}
+			arrayAppend(local.jobs, {"name": local.script.name, "min": local.script.min, "source": local.script.debug, "pack": true});
+		}
 		for (local.package in variables.packages) {
-			
+			arrayAppend(local.jobs, local.package);
+		}
+		for (local.package in local.jobs) {
+
 			local.res = {"name": local.package.name,"saved": false};
-			
+
 			if (local.package.pack) {
-				
+
 				local.outputFile = filePath(local.package.min,arguments.mappings);
 				local.res["filename"] = local.outputFile;
-				
+
 				if (FileExists(local.outputFile) AND NOT arguments.overwrite) {
 					ArrayAppend(local.results, local.res);
 					continue;
 				}
-				
+
 				local.res["files"]=[];
 				local.res["raw"] = 0;// sum total size of raw packages
 				// TO DO: check package scripts are in order. Use them if they are
 				local.out = "";
-				for (local.script in variables.scripts) {
-					
-					if (ArrayFind(local.package.scripts, local.script.name)) {
-						if (!local.script.packageExclude) {
-							local.filename = filePath(local.script.min,arguments.mappings);
-							if (!FileExists(local.filename)) {
-								Throw(message="File #local.filename# not found for script #local.script.name#. Please check mappings if this doesn't make sense.");
+				if (structKeyExists(local.package, "source")) {
+					local.filename = filePath(local.package.source, arguments.mappings);
+					if (getCanonicalPath(local.filename) == getCanonicalPath(local.outputFile)) {
+						throw(message="Source and destination must differ for script #local.package.name#");
+					}
+					if (!fileExists(local.filename)) {
+						throw(message="File #local.filename# not found for script #local.package.name#. Please check mappings.");
+					}
+					local.res.raw = getFileInfo(local.filename).size;
+					local.out = fileRead(local.filename, "utf-8");
+					arrayAppend(local.res.files, local.filename);
+				}
+				else {
+					for (local.script in variables.scripts) {
+
+						if (ArrayFind(local.package.scripts, local.script.name)) {
+							if (!local.script.packageExclude) {
+								local.filename = filePath(local.script.min,arguments.mappings);
+								if (!FileExists(local.filename)) {
+									Throw(message="File #local.filename# not found for script #local.script.name#. Please check mappings if this doesn't make sense.");
+								}
+								local.res.raw += getFileInfo(local.filename).size;
+								local.out &= FileRead(local.filename,"utf-8");
+								ArrayAppend(local.res.files, local.filename);
 							}
-							local.res.raw += getFileInfo(local.filename).size;
-							local.out &= FileRead(local.filename,"utf-8");
-							ArrayAppend(local.res.files, local.filename);
 						}
 					}
-				}
-				if (local.out != "") {
-					
+					}
+				if (local.out != "" || structKeyExists(local.package, "source")) {
+
 					local.out =	variables.debugpattern.matcher(local.out).replaceAll("");
-					
+
 					if (arguments.minify) {
 						try {
 							if (arguments.type == "css") {
@@ -254,14 +279,14 @@ component {
 							}
 						}
 						catch (any e) {
-							local.extendedinfo = e.keyExists("extendedinfo") ? deserializeJSON(e.extendedinfo) : {};
+							local.extendedinfo = e.keyExists("extendedinfo") && isJSON(e.extendedinfo) ? deserializeJSON(e.extendedinfo) : {};
 							StructAppend(local.extendedinfo, {"tagcontext"=e.tagcontext}, false);
-							
+
 							throw(
 								extendedinfo = SerializeJSON(local.extendedinfo),
-								message      = "Unable to minify file #local.outputFile#:" & e.message, 
+								message      = "Unable to minify file #local.outputFile#:" & e.message,
 								detail       = e.detail,
-								errorcode    = "compressPackage.2"		
+								errorcode    = "compress.2"
 							);
 						}
 					}
@@ -270,98 +295,93 @@ component {
 					}
 
 					try {
+						local.outputDirectory = getDirectoryFromPath(local.outputFile);
+						if (!directoryExists(local.outputDirectory)) {
+							directoryCreate(local.outputDirectory, true);
+						}
 						FileWrite(local.outputFile, local.compressed, "utf-8");
 					}
 					catch (any e) {
 						throw(
-							message      = "Unable to save file #local.outputFile#:" & e.message, 
+							message      = "Unable to save file #local.outputFile#:" & e.message,
 							detail       = e.detail,
-							errorcode    = "compressPackage.1"		
+							errorcode    = "compress.1"
 						);
 					}
-					
+
 					local.res["compressed"] = getFileInfo(local.outputFile).size;;
 					local.res["saved"] = true;
 				}
 			}
 
 			ArrayAppend(local.results, local.res);
-			
+
 		}
 
 		return local.results;
 	}
 
 	public string function minifiyCSS(required string css) {
-		
-		return callCompressAPI(input=arguments.css, apiendpoint="https://www.toptal.com/developers/cssminifier/api/raw");
+
+		return compressSource(input=arguments.css, type="css");
 	}
 
 	public string function minifiyJS(required string js) {
 		arguments.js = removeJsComments(arguments.js);
-		return callCompressAPI(input=arguments.js, apiendpoint="https://www.toptal.com/developers/javascript-minifier/api/raw");
+		return compressSource(input=arguments.js, type="js");
 	}
 
 	public string function removeJsComments(required string js) {
 		return variables.consolepattern.matcher(arguments.js).replaceAll("");
 	}
 
-	private string function callCompressAPI(required string input, required string apiendpoint) {
-		local.httpService = new http(method = "POST", charset = "utf-8", url = arguments.apiendpoint,multipart="false");
-		local.httpService.addParam(type = "formfield",name="input", value = arguments.input);
-		local.httpService.addParam(type = "header", name='content-type', value='application/x-www-form-urlencoded');
-	  
+	/** Minify source with Node.js and esbuild available through npx on PATH. */
+	private string function compressSource(required string input, required string type) {
+		local.tempDirectory = getTempDirectory() & "staticfiles-" & createUUID() & "/";
+		local.fileIn = local.tempDirectory & "input." & arguments.type;
+		local.fileOut = local.tempDirectory & "output." & arguments.type;
+		local.cmd = (server.os.name CONTAINS "Windows") ? "npx.cmd" : "npx";
+		local.stdout = "";
+		local.stderr = "";
+
+		directoryCreate(local.tempDirectory);
 		try {
-			local.result = httpService.send().getPrefix();
-		}
-		catch (e) {
-			throw(message="unable to connect to compression API",detail=e.message);
-		}
-
-		if ((! (StructKeyExists(local.result,"text") && local.result.text)) OR !StructKeyExists(local.result,"filecontent") OR NOT local.result.status_code eq 200)  {
-
-			StructAppend(local.result,{"errordetail":"Unknown error"},false);
-
-			try {
-				local.result.filecontent = deserializeJSON(local.result.filecontent);
-			}
-			catch (any f) {
-				//ignore
-			}
-
-			local.extendedinfo = {"result"=local.result, "input"=arguments.input};
-
-			throw(
-				extendedinfo = SerializeJSON(local.extendedinfo),
-				message      = "Compression API return an error:" & local.result.errordetail, 
-				errorcode    = ""		
+			fileWrite(local.fileIn, arguments.input, "utf-8");
+			cfexecute(
+				name = local.cmd,
+				arguments = [
+					"esbuild",
+					local.fileIn,
+					"--minify",
+					"--outfile=#local.fileOut#"
+				],
+				directory = local.tempDirectory,
+				variable = "local.stdout",
+				errorVariable = "local.stderr",
+				timeout = 60
 			);
-		}
-		try{
-			
-		} 
-		catch (any e) {
-			
-			throw(
-				extendedinfo = SerializeJSON(local.extendedinfo),
-				message      = "Error:" & e.message, 
-				detail       = e.detail,
-				errorcode    = ""		
-			);
-		}
-				
 
-		return local.result.filecontent;
-		
+			// esbuild writes progress to stderr even on success. Require a new output file.
+			if (!fileExists(local.fileOut)) {
+				throw(
+					message = "Error compressing source with esbuild",
+					detail = local.stderr,
+					extendedinfo = serializeJSON({"stdout": local.stdout, "stderr": local.stderr})
+				);
+			}
+			return fileRead(local.fileOut, "utf-8");
+		}
+		finally {
+			directoryDelete(local.tempDirectory, true);
+		}
 	}
-
 	/**
 	 * Get absolute path of a script from a url
 	 * @src    src of script -- be default this will be expanded
 	 * @mappings  Specified full paths to match agains the src
 	 */
 	public string function filePath(required string src, required struct mappings) {
-		
+
 		var ret = arguments.src;
 		for (var mapping in arguments.mappings) {
 			if (reFind("^#mapping#", arguments.src)) {

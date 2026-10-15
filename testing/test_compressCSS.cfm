@@ -8,7 +8,7 @@ Test pad for testing staticFiles compression method
 
 Create a staticfiles object and load a def file.
 
-Run the compressPackage Method
+Run the compress Method
 
 ## Usage
 
@@ -42,10 +42,15 @@ A build process would probably also push the files to the cloud or similar.
 
 --->
 
+<cfsetting showdebugoutput="false" requesttimeout="180">
+<cfcontent type="application/json; charset=utf-8" reset="true">
 <cfscript>
+param url.filter = "";
+results = [];
+try {
 mappings = [
 	"/assets/" = ExpandPath("/clik/assets/"),
-	"/assets/css/_min/" = ExpandPath("_output/"),
+    "/assets/css/_min/" = ExpandPath("_output/"),
 	"/assets/js/_min/" = ExpandPath("_output/")
 ];
 
@@ -61,15 +66,24 @@ for (opts in ["CSS"]) {
 		throw("Unable to parse static files definition file #defFile#");	
 	}
 
-	staticFilesObj = new staticFiles.staticFiles(staticDef=jsonData);
+	// Optional filter selects individual entries for a focused real-file test.
+    if (len(url.filter)) {
+        for (i = arrayLen(jsonData.scripts); i >= 1; i--) {
+            if (!listFindNoCase(url.filter, jsonData.scripts[i].name)) arrayDeleteAt(jsonData.scripts, i);
+        }
+        jsonData.packages = [];
+    }
+    staticFilesObj = new staticFiles.staticFiles(staticDef=jsonData);
 
-	packages = staticFilesObj.compressPackage(type=opts,overwrite=false,mappings=mappings,minify=true);
+	packages = staticFilesObj.compress(type=opts,overwrite=false,mappings=mappings,minify=true);
 
-	for (res in packages) {
-		writeDump(res);
-	}
+	arrayAppend(results, {"type": opts, "results": packages});
 }
 
 copyFile = ExpandPath("_output/copy.bat");
 
+writeOutput(serializeJSON({"passed": true, "results": results}));
+} catch (any e) {
+writeOutput(serializeJSON({"passed": false, "message": e.message, "detail": e.detail, "results": results}));
+}
 </cfscript>
